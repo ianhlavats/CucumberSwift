@@ -10,10 +10,21 @@ import Foundation
 import XCTest
 
 open class CucumberTest: XCTestCase {
-    override public class var defaultTestSuite: XCTestSuite {
-        Cucumber.shared.reporters.forEach { $0.testSuiteStarted(at: Date()) }
 
-        let suite = XCTestSuite(forTestCaseClass: CucumberTest.self)
+    static var didRun = false
+
+    static var didInitTestSuite = false
+
+    override open func invokeTest() {
+        guard !Self.didRun else { return }
+        Self.didRun = true
+        super.invokeTest()
+    }
+
+    override public class var defaultTestSuite: XCTestSuite {
+
+        guard !Self.didInitTestSuite else { return XCTestSuite(name: "empty") }
+        Self.didInitTestSuite = true
 
         Cucumber.shared.features.removeAll()
         if let bundle = (Cucumber.shared as? StepImplementation)?.bundle {
