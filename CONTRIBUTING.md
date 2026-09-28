@@ -10,7 +10,7 @@ It comes down to three things:
 
 The rest of this page explains how each step works here, so your contribution lands quickly and nobody's time is wasted, yours included.
 
-**Contents:** [Questions](#questions) · [Reporting a bug or requesting a feature](#reporting-a-bug-or-requesting-a-feature) · [Before you open a PR](#before-you-open-a-pr) · [Setting up](#setting-up) · [Making a change](#making-a-change) · [Pull request etiquette](#pull-request-etiquette) · [Review](#review) · [Using AI tools](#using-ai-tools)
+**Contents:** [Questions](#questions) · [Reporting a bug or requesting a feature](#reporting-a-bug-or-requesting-a-feature) · [Before you open a PR](#before-you-open-a-pr) · [Setting up](#setting-up) · [The Xcode project](#the-xcode-project) · [Making a change](#making-a-change) · [Pull request etiquette](#pull-request-etiquette) · [Review](#review) · [Using AI tools](#using-ai-tools)
 
 ## Questions
 
@@ -61,6 +61,7 @@ Finding an existing attempt doesn't automatically mean stop. If it's gone stale,
 2. Create a branch for your change. Don't work on your fork's `main` branch. Keeping it as a clean copy of ours makes it easy to stay in sync and to work on more than one change at a time.
 3. Open `CucumberSwift.xcodeproj` in Xcode.
 4. Install [SwiftLint](https://github.com/realm/SwiftLint) (for example `brew install swiftlint`). The Xcode build runs it with the repository's `.swiftlint.yml`.
+5. Only if you'll add, remove or rename files, or change targets or settings, set up Tuist as described in [The Xcode project](#the-xcode-project). Most changes don't need it.
 
 Build and run the tests with `xcodebuild`:
 
@@ -71,6 +72,69 @@ xcodebuild test -scheme CucumberSwift -destination 'platform=macOS,variant=Mac C
 Please use `xcodebuild` or Xcode, not `swift build` or `swift test`. They don't build the same configuration as the Xcode project, so they can pass when CI fails, or fail when CI passes.
 
 Run the tests once before you change anything and note the numbers of tests, failures and skipped tests. Then you can compare after your change. A test that silently stops running still reports success.
+
+## The Xcode project
+
+**Don't edit `CucumberSwift.xcodeproj` by hand.** It's generated from `Project.swift` by [Tuist](https://tuist.dev), and CI fails a pull request whose committed project doesn't match what `Project.swift` generates. Change the manifest and regenerate instead.
+
+### Why a generated project
+
+A hand-edited `project.pbxproj` is hard to review, conflicts constantly, and adding a single source file takes several separate edits in the right places. Generating the project from a manifest avoids all of that, and it's a common approach: [XcodeGen](https://github.com/yonaskolb/XcodeGen) does it from a YAML spec, and [rules_xcodeproj](https://github.com/MobileNativeFoundation/rules_xcodeproj) (the successor to Google's Tulsi) does it for Bazel builds.
+
+We use Tuist because its manifests are Swift, checked by the compiler and edited in Xcode with autocompletion, and it works well as a build tool for Xcode projects that use Swift Package Manager. The maintainers use Tuist and contribute to it. In practice this means:
+
+- New source files are picked up automatically. `Project.swift` finds them by glob.
+- A change to targets, settings or schemes is a readable Swift diff, not a `pbxproj` diff.
+- Generation is reproducible, so CI can check that the committed project and the manifest agree.
+
+### Do you need Tuist?
+
+Only if your change adds, removes or renames a file, or changes a target, a build setting or a scheme. Editing existing files doesn't need it. Nobody who uses CucumberSwift needs Tuist, whether through Swift Package Manager or Carthage.
+
+### Setting up
+
+We pin the tool versions with [mise](https://mise.jdx.dev), a per-project tool version manager. `.mise.toml` says which version of Tuist this repository needs, much like `.nvmrc` does for Node. Tuist is pinned to an exact version and only changes in a pull request that updates it.
+
+1. Install mise, for example with `brew install mise`. You need mise 2026.9.1 or later; `.mise.toml` checks this.
+2. Trust the repository: `mise trust`. mise won't use a repository's `.mise.toml` until you do, because the file can set environment variables and define tasks that run commands. Read it first. Ours pins Tuist and defines two tasks, `generate` and `check-project`. Trust applies to that directory only.
+3. Install the pinned Tuist: `mise install`. It downloads Tuist from its GitHub release and checks it against the release's published checksums.
+
+You don't have to activate mise in your shell. The commands below all go through `mise run` or `mise exec`.
+
+### Regenerating
+
+```bash
+mise run generate          # regenerate the project from Project.swift (tuist generate)
+mise run check-project     # regenerate, and fail if the result differs from the project; CI runs this
+mise exec -- tuist edit    # open Project.swift in Xcode with autocompletion
+```
+
+If your change adds, removes or renames a file, or touches `Project.swift`, run `mise run generate` and commit the regenerated `CucumberSwift.xcodeproj` with your change. A pull request whose project and manifest disagree fails CI.
+
+To catch that before you push, turn on the pre-commit hook once in your clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+It runs `mise run check-project`, but only when a commit touches the manifests or the project, or adds, removes or renames a file under `Sources` or `Tests`.
+
+You don't need `tuist install`. The package dependencies use Xcode's own Swift Package Manager integration. `tuist generate` may still print "We detected outdated dependencies. Run 'tuist install'"; you can ignore it.
+
+### Why the generated project is committed
+
+Tuist could recreate the project, so committing it is a deliberate choice. Carthage clones this repository and runs `xcodebuild` against the shared schemes it finds in the checkout. It has no way to run a generator first, so a repository without a committed project fails for every Carthage user with "has no shared framework schemes".
+
+### Things to keep in mind
+
+- **Three scheme names are load bearing.** `fastlane unit_test` and the CI workflows run `CucumberSwift`, and Carthage builds it. Don't rename `CucumberSwift`, `CucumberSwiftConsumerTests` or `CucumberSwiftDSLConsumerTests`.
+- **`project.xcworkspace/xcshareddata/swiftpm/Package.resolved` is a lockfile for Carthage users.** It pins the CucumberSwiftExpressions version they get. Regenerating leaves it alone. If your diff changes it anyway, put it back unless updating that dependency is what your change is for.
+
+### Troubleshooting
+
+- **"Config files … are not trusted"**: run `mise trust` in the repository.
+- **mise says it's too old for this repository**: update it, for example `brew upgrade mise`.
+- **`mise run check-project` fails and you didn't mean to change the project**: run `mise run generate`, check the diff, and commit it if it's what you expect. If it isn't, ask on the pull request.
 
 ## Making a change
 
@@ -91,7 +155,7 @@ Run the tests once before you change anything and note the numbers of tests, fai
 
 **Public API.** A change to a `public` or `open` symbol should be additive. If it has to be breaking, say so on the issue before you write it. Be careful with new overloads: one can silently change which method existing code calls (see [#125](https://github.com/cucumberswift/CucumberSwift/issues/125)).
 
-**New source files.** Add every new source file to `CucumberSwift.xcodeproj` as well as to the package. Carthage builds from the Xcode project, so a file that is missing there breaks Carthage users. Build in Xcode to check.
+**New source files.** `Project.swift` picks up source files by glob, so you don't add them to the Xcode project by hand. Run `mise run generate` and commit the regenerated `CucumberSwift.xcodeproj` with your change. Carthage builds from that project, so a file missing there breaks Carthage users. See [The Xcode project](#the-xcode-project).
 
 **Keep the diff focused.**
 
